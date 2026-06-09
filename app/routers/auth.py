@@ -1,0 +1,166 @@
+from fastapi import APIRouter, HTTPException, Depends, status, Response, Request
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
+from typing import Annotated
+
+from app.security import (hash_password, create_access_token, create_refresh_token,
+                          verify_password, decode_access_token)
+from app.schemas import UserCreate, UserRead
+from app.models import User
+from app.schemas import Token
+from app.dependencies import dbSession
+from app.config import settings
+
+
+
+router = APIRouter(prefix='/auth', tags=['Auth'])
+
+@router.post('/register', response_model=UserRead)
+async def register(db: dbSession,
+                   user: UserCreate,
+                   response: Response):
+
+    query = select(User).where(User.email == user.email)
+    result = await db.execute(query)
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="User with this email already exists",
+        )
+
+    new_user = User(
+        nickname = user.nickname,
+        email = user.email,
+        password_hash = hash_password(user.password),
+        role = 'buyer'
+    )
+
+    
+    
+    
+    db.add(new_user)
+
+    await db.commit()
+    await db.refresh(new_user)
+
+    
+    access_token = create_access_token(data={'sub': str(new_user.id)})
+    refresh_token = create_refresh_token(data={'sub': str(new_user.id)})
+
+    #access_token
+    response.set_cookie(
+        key=settings.access_cookie_name,
+        value=access_token,
+        max_age=settings.access_token_expire_minutes*60,
+        httponly=settings.cookie_httponly,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite
+    )
+
+    #refresh_token
+    response.set_cookie(
+        key = settings.refresh_cookie_name,
+        value = refresh_token,
+        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
+        httponly=settings.cookie_httponly,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite
+    )
+
+    return new_user
+
+
+@router.post('/login', response_model=Token)
+async def login(
+    form: Annotated[OAuth2PasswordRequestForm, Depends()],
+    db: dbSession,
+    response: Response
+):
+    result = await db.execute(
+        select(User).where(User.email == form.username)
+    )
+    user = result.scalar_one_or_none()
+
+    if user is None or not verify_password(form.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, 
+                            detail='Incorrect email or password', 
+                            headers={"WWW-Authenticate": "Bearer"})
+    
+    access_token = create_access_token(data={'sub': str(user.id)})
+    refresh_token = create_refresh_token(data={'sub': str(user.id)})
+
+    #access_token
+    response.set_cookie(
+        key=settings.access_cookie_name,
+        value=access_token,
+        max_age=settings.access_token_expire_minutes*60,
+        httponly=settings.cookie_httponly,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite
+    )
+
+    #refresh_token
+    response.set_cookie(
+        key = settings.refresh_cookie_name,
+        value = refresh_token,
+        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
+        httponly=settings.cookie_httponly,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite
+    )
+
+    return Token(access_token=access_token, token_type='bearer')
+
+
+
+@router.post('/refresh')
+async def refresh(request: Request, db: dbSession, response: Response):
+    refresh_token = request.cookies.get(settings.refresh_cookie_name)
+    if refresh_token is None:
+        raise HTTPException(status_code=401, detail='Refresh token not found')
+    
+    payload = decode_access_token(refresh_token)
+    if payload is None or payload.get('type') != 'refresh':
+        raise HTTPException(status_code=401, detail='Refresh token is invalid')
+    
+    user_id = payload.get('sub')
+    if user_id is None:
+        raise HTTPException(status_code=401, detail='User ID is missing')
+    
+    result = await db.execute(select(User).where(User.id == int(user_id)))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=401, detail='User not found')
+    
+    new_access_token = create_access_token(data={'sub': str(user_id)})
+    response.set_cookie(
+        key = settings.access_cookie_name,
+        value = new_access_token,
+        max_age=settings.access_token_expire_minutes*60,
+        httponly=settings.cookie_httponly,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite
+    )
+    
+    return Token(access_token=new_access_token, token_type='bearer')
+
+
+@router.post('/logout')
+async def logout(response: Response):
+    response.delete_cookie(
+        key=settings.access_cookie_name,
+        httponly=settings.cookie_httponly,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite
+        )
+    response.delete_cookie(
+        key=settings.refresh_cookie_name,
+        httponly=settings.cookie_httponly,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite
+        )
+    return {'detail': 'You have successfully logged out'}
+

@@ -1,0 +1,22 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    database_url: str
+    security_key: str
+    algorithm: str = 'HS256'
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+
+    access_cookie_name: str = 'access_token'
+    refresh_cookie_name: str = 'refresh_token'
+    cookie_httponly: bool = True
+    cookie_secure: bool = False
+    cookie_samesite: str = 'lax'
+
+    model_config = SettingsConfigDict(
+        env_file='.env',
+        env_file_encoding='utf-8',
+        case_sensitive = False
+    )
+
+settings = Settings()
