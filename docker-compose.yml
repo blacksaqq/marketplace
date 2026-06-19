@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  # Контейнер новой базы данных PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: marketplace_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: SuperSecr3tPass  # Наш новый пароль
+      POSTGRES_DB: marketplace
+    ports:
+      - "5432:5432"  # Снова используем чистый стандартный порт
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Контейнер твоего FastAPI приложения
+  web:
+    build: .
+    container_name: marketplace_api
+    restart: always
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    env_file:
+      - .env
+
+volumes:
+  postgres_data:

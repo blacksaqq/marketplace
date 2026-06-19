@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+from sqlalchemy import select, func
 from typing import Annotated
 
 from app.security import (hash_password, create_access_token, create_refresh_token,
@@ -30,14 +30,15 @@ async def register(db: dbSession,
             status_code=status.HTTP_409_CONFLICT,
             detail="User with this email already exists",
         )
+    
+    count = await db.execute(select(func.count()).select_from(User))
 
     new_user = User(
         nickname = user.nickname,
         email = user.email,
         password_hash = hash_password(user.password),
-        role = 'buyer'
+        role = 'admin' if count.scalar() == 0 else 'buyer'
     )
-
     
     
     
